@@ -8,7 +8,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Generate and Fact-Check Animal Short
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate Animal Short
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -18,42 +21,66 @@ jobs:
           import urllib.request
 
           API_KEY = os.environ["GEMINI_API_KEY"]
+
           URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent"
 
-          prompt = r"""
-          You are the research and fact-checking engine for an educational YouTube Shorts
+          # Read previously used topics
+          topics_file = "data/used_topics.json"
+
+          try:
+              with open(topics_file, "r", encoding="utf-8") as f:
+                  used_topics = json.load(f)
+          except:
+              used_topics = []
+
+          used_topics_text = "\n".join(
+              f"- {topic}" for topic in used_topics
+          )
+
+          if not used_topics_text:
+              used_topics_text = "No topics have been used yet."
+
+          prompt = f"""
+          You are the content engine for an educational YouTube Shorts
           channel about animals and wildlife.
 
-          Your task:
-
-          1. Choose ONE interesting animal fact suitable for a 30-45 second YouTube Short.
-          2. Check the scientific accuracy of every important claim internally.
-          3. Avoid myths, exaggerations, clickbait claims, and uncertain facts.
-          4. If a commonly repeated fact is misleading or oversimplified, correct it.
-          5. Write a short, engaging English narration.
-          6. Create 5 visual scene descriptions.
+          Choose ONE NEW animal fact for a 30-45 second YouTube Short.
 
           IMPORTANT:
-          - Accuracy is more important than being sensational.
-          - Do not claim something is "100% true" unless it is genuinely established.
-          - Do not invent statistics.
-          - Do not use unsupported scientific claims.
-          - The narration should sound natural when read by TTS.
-          - No background music.
-          - Target length: approximately 35-45 seconds.
+          The following topics have already been used:
+
+          {used_topics_text}
+
+          Do NOT choose any of these topics again.
+
+          Also avoid choosing a topic that is essentially the same idea
+          with a different title.
+
+          Requirements:
+
+          1. Choose an interesting and scientifically accurate animal fact.
+          2. Fact-check the important claims before writing.
+          3. Avoid myths, exaggerations and unsupported claims.
+          4. Accuracy is more important than sensationalism.
+          5. Write natural English suitable for TTS.
+          6. Target approximately 35-45 seconds.
+          7. Create exactly 5 visual scene descriptions.
+          8. No background music.
+          9. Do not invent statistics.
+          10. If a fact is uncertain, choose another topic.
 
           Return ONLY valid JSON in exactly this structure:
 
-          {
+          {{
             "topic": "...",
             "title": "...",
-            "fact_check": {
+            "fact_check": {{
               "status": "PASS",
               "notes": [
                 "...",
                 "..."
               ]
-            },
+            }},
             "script": "...",
             "scenes": [
               "...",
@@ -69,13 +96,15 @@ jobs:
               "#facts",
               "#wildlife"
             ]
-          }
+          }}
 
-          The fact_check status must be:
+          fact_check.status must be:
+
           PASS = the claims are sufficiently supported and safe to publish.
+
           FAIL = there is a significant factual problem.
 
-          If you cannot confidently produce an accurate fact, choose another animal fact.
+          If the fact check fails, choose a different fact and try again.
           """
 
           data = {
@@ -103,6 +132,73 @@ jobs:
               },
               method="POST"
           )
+
+          with urllib.request.urlopen(req) as response:
+              result = json.loads(response.read().decode("utf-8"))
+
+          text = result["candidates"][0]["content"]["parts"][0]["text"]
+
+          output = json.loads(text)
+
+          print("\n========== ANIMAL SHORT ==========\n")
+
+          print("TOPIC:", output["topic"])
+          print("TITLE:", output["title"])
+
+          print("\nFACT CHECK:", output["fact_check"]["status"])
+
+          print("\nFACT-CHECK NOTES:")
+          for note in output["fact_check"]["notes"]:
+              print("-", note)
+
+          if output["fact_check"]["status"] != "PASS":
+              raise SystemExit(
+                  "FACT CHECK FAILED - VIDEO WILL NOT BE GENERATED."
+              )
+
+          # Check again that Gemini did not repeat an old topic
+          new_topic = output["topic"].strip().lower()
+
+          for old_topic in used_topics:
+              if new_topic == old_topic.strip().lower():
+                  raise SystemExit(
+                      "DUPLICATE TOPIC DETECTED - VIDEO WILL NOT BE GENERATED."
+                  )
+
+          print("\nSCRIPT:\n")
+          print(output["script"])
+
+          print("\nSCENES:\n")
+          for i, scene in enumerate(output["scenes"], 1):
+              print(f"{i}. {scene}")
+
+          print("\nHASHTAGS:")
+          print(" ".join(output["hashtags"]))
+
+          # Add the new topic to the history
+          used_topics.append(output["topic"])
+
+          with open(topics_file, "w", encoding="utf-8") as f:
+              json.dump(used_topics, f, ensure_ascii=False, indent=2)
+
+          print("\nTopic saved to:", topics_file)
+
+          print("\n========== SUCCESS ==========\n")
+          PY
+
+      - name: Save topic history
+        run: |
+          git config user.name "animal-shorts-bot"
+          git config user.email "animal-shorts-bot@users.noreply.github.com"
+
+          git add data/used_topics.json
+
+          if git diff --cached --quiet; then
+            echo "No changes to save."
+          else
+            git commit -m "Update used animal topics"
+            git push
+          fi          )
 
           with urllib.request.urlopen(req) as response:
               result = json.loads(response.read().decode("utf-8"))
