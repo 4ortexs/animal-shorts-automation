@@ -1,14 +1,14 @@
-name: Test Gemini
+name: Generate Animal Short
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-gemini:
+  generate:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test Gemini API
+      - name: Generate content with Gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -21,10 +21,47 @@ jobs:
 
           url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent"
 
+          prompt = """
+          You are an expert wildlife YouTube Shorts content creator.
+
+          Create ONE original English YouTube Short about an interesting animal fact.
+
+          Requirements:
+          - Duration: 30-40 seconds
+          - Educational and scientifically accurate
+          - Strong hook in the first sentence
+          - No fake facts or exaggerations presented as facts
+          - Suitable for a general audience
+          - No background music
+          - Narration only
+          - Make the topic surprising and highly clickable
+
+          Return EXACTLY this format:
+
+          TOPIC:
+          [topic]
+
+          TITLE:
+          [short clickable YouTube title]
+
+          SCRIPT:
+          [30-40 second narration]
+
+          SCENES:
+          1. [visual description]
+          2. [visual description]
+          3. [visual description]
+          4. [visual description]
+          5. [visual description]
+
+          HASHTAGS:
+          [5 relevant hashtags]
+          """
+
           data = {
               "contents": [{
                   "parts": [{
-                      "text": "Reply with exactly: Gemini is working!"
+                      "text": prompt
                   }]
               }]
           }
@@ -39,12 +76,13 @@ jobs:
               method="POST"
           )
 
-          try:
-              with urllib.request.urlopen(request) as response:
-                  result = json.loads(response.read())
-                  print(result["candidates"][0]["content"]["parts"][0]["text"])
-          except urllib.error.HTTPError as e:
-              print("HTTP ERROR:", e.code)
-              print(e.read().decode())
-              raise
+          with urllib.request.urlopen(request) as response:
+              result = json.loads(response.read())
+
+          answer = result["candidates"][0]["content"]["parts"][0]["text"]
+
+          print("================================")
+          print("GENERATED ANIMAL SHORT")
+          print("================================")
+          print(answer)
           PY
