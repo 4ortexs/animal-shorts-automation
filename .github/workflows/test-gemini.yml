@@ -9,7 +9,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Generate Animal Short
         env:
@@ -24,13 +24,12 @@ jobs:
 
           URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent"
 
-          # Read previously used topics
           topics_file = "data/used_topics.json"
 
           try:
               with open(topics_file, "r", encoding="utf-8") as f:
                   used_topics = json.load(f)
-          except:
+          except Exception:
               used_topics = []
 
           used_topics_text = "\n".join(
@@ -46,8 +45,7 @@ jobs:
 
           Choose ONE NEW animal fact for a 30-45 second YouTube Short.
 
-          IMPORTANT:
-          The following topics have already been used:
+          These topics have already been used:
 
           {used_topics_text}
 
@@ -69,7 +67,7 @@ jobs:
           9. Do not invent statistics.
           10. If a fact is uncertain, choose another topic.
 
-          Return ONLY valid JSON in exactly this structure:
+          Return ONLY valid JSON:
 
           {{
             "topic": "...",
@@ -98,13 +96,8 @@ jobs:
             ]
           }}
 
-          fact_check.status must be:
-
-          PASS = the claims are sufficiently supported and safe to publish.
-
-          FAIL = there is a significant factual problem.
-
-          If the fact check fails, choose a different fact and try again.
+          PASS means the claims are sufficiently supported and safe to publish.
+          FAIL means there is a significant factual problem.
           """
 
           data = {
@@ -140,14 +133,19 @@ jobs:
 
           output = json.loads(text)
 
-          print("\n========== ANIMAL SHORT ==========\n")
+          print("")
+          print("========== ANIMAL SHORT ==========")
+          print("")
 
           print("TOPIC:", output["topic"])
           print("TITLE:", output["title"])
 
-          print("\nFACT CHECK:", output["fact_check"]["status"])
+          print("")
+          print("FACT CHECK:", output["fact_check"]["status"])
 
-          print("\nFACT-CHECK NOTES:")
+          print("")
+          print("FACT-CHECK NOTES:")
+
           for note in output["fact_check"]["notes"]:
               print("-", note)
 
@@ -156,7 +154,6 @@ jobs:
                   "FACT CHECK FAILED - VIDEO WILL NOT BE GENERATED."
               )
 
-          # Check again that Gemini did not repeat an old topic
           new_topic = output["topic"].strip().lower()
 
           for old_topic in used_topics:
@@ -165,70 +162,40 @@ jobs:
                       "DUPLICATE TOPIC DETECTED - VIDEO WILL NOT BE GENERATED."
                   )
 
-          print("\nSCRIPT:\n")
+          print("")
+          print("SCRIPT:")
+          print("")
           print(output["script"])
 
-          print("\nSCENES:\n")
+          print("")
+          print("SCENES:")
+
           for i, scene in enumerate(output["scenes"], 1):
               print(f"{i}. {scene}")
 
-          print("\nHASHTAGS:")
+          print("")
+          print("HASHTAGS:")
           print(" ".join(output["hashtags"]))
 
-          # Add the new topic to the history
           used_topics.append(output["topic"])
 
           with open(topics_file, "w", encoding="utf-8") as f:
-              json.dump(used_topics, f, ensure_ascii=False, indent=2)
+              json.dump(
+                  used_topics,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
 
-          print("\nTopic saved to:", topics_file)
-
-          print("\n========== SUCCESS ==========\n")
-          PY
+          print("")
+          print("Topic saved successfully.")
+          print("")
+          print("========== SUCCESS ==========")
 
       - name: Save topic history
         run: |
           git config user.name "animal-shorts-bot"
           git config user.email "animal-shorts-bot@users.noreply.github.com"
-
           git add data/used_topics.json
-
-          if git diff --cached --quiet; then
-            echo "No changes to save."
-          else
-            git commit -m "Update used animal topics"
-            git push
-          fi          )
-
-          with urllib.request.urlopen(req) as response:
-              result = json.loads(response.read().decode("utf-8"))
-
-          text = result["candidates"][0]["content"]["parts"][0]["text"]
-
-          output = json.loads(text)
-
-          print("\n========== ANIMAL SHORT ==========\n")
-          print("TOPIC:", output["topic"])
-          print("TITLE:", output["title"])
-
-          print("\nFACT CHECK:", output["fact_check"]["status"])
-
-          print("\nFACT-CHECK NOTES:")
-          for note in output["fact_check"]["notes"]:
-              print("-", note)
-
-          if output["fact_check"]["status"] != "PASS":
-              raise SystemExit("FACT CHECK FAILED - VIDEO WILL NOT BE GENERATED.")
-
-          print("\nSCRIPT:\n")
-          print(output["script"])
-
-          print("\nSCENES:\n")
-          for i, scene in enumerate(output["scenes"], 1):
-              print(f"{i}. {scene}")
-
-          print("\nHASHTAGS:")
-          print(" ".join(output["hashtags"]))
-
-          print("\n========== SUCCESS ==========\n")
-          PY
+          git diff --cached --quiet || git commit -m "Update used animal topics"
+          git push
