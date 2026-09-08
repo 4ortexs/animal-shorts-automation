@@ -1,0 +1,68 @@
+name: Test TTS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install TTS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y espeak-ng
+          pip install "kokoro>=0.9.4" soundfile
+
+      - name: Generate voice
+        run: |
+          python - <<'PY'
+          from kokoro import KPipeline
+          import soundfile as sf
+
+          text = """
+          Did you know that octopuses have three hearts?
+          Two hearts pump blood to the gills,
+          while the third pumps blood to the rest of the body.
+          """
+
+          pipeline = KPipeline(lang_code="a")
+
+          generator = pipeline(
+              text,
+              voice="af_heart",
+              speed=1.0
+          )
+
+          audio_parts = []
+
+          for _, _, audio in generator:
+              audio_parts.append(audio)
+
+          import numpy as np
+
+          audio = np.concatenate(audio_parts)
+
+          sf.write(
+              "test-voice.wav",
+              audio,
+              24000
+          )
+
+          print("TTS SUCCESS!")
+          print("Created: test-voice.wav")
+          PY
+
+      - name: Upload audio
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-voice
+          path: test-voice.wav
