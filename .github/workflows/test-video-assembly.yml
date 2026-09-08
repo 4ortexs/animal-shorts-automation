@@ -1,0 +1,132 @@
+name: Test Video Assembly
+
+on:
+  workflow_dispatch:
+
+jobs:
+  assembly:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          pip install "kokoro>=0.9.4" soundfile
+
+      - name: Install espeak
+        run: |
+          sudo apt-get install -y espeak-ng
+
+      - name: Download Pixabay video
+        env:
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.parse
+
+          API_KEY = os.environ["PIXABAY_API_KEY"]
+
+          query = urllib.parse.quote("octopus")
+
+          url = (
+              "https://pixabay.com/api/videos/"
+              f"?key={API_KEY}"
+              f"&q={query}"
+              "&category=animals"
+              "&safesearch=true"
+              "&per_page=5"
+          )
+
+          req = urllib.request.Request(
+              url,
+              headers={"User-Agent": "Mozilla/5.0"}
+          )
+
+          with urllib.request.urlopen(req) as response:
+              data = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          videos = data.get("hits", [])
+
+          if not videos:
+              raise SystemExit("No videos found.")
+
+          video_url = videos[0]["videos"]["medium"]["url"]
+
+          print("Downloading Pixabay video...")
+
+          req = urllib.request.Request(
+              video_url,
+              headers={"User-Agent": "Mozilla/5.0"}
+          )
+
+          with urllib.request.urlopen(req) as response:
+              with open("animal.mp4", "wb") as f:
+                  f.write(response.read())
+
+          print("Pixabay video downloaded!")
+          PY
+
+      - name: Generate Kokoro voice
+        run: |
+          python - <<'PY'
+          from kokoro import KPipeline
+          import soundfile as sf
+          import numpy as np
+
+          text = """
+          Did you know that octopuses have three hearts?
+          Two hearts pump blood to the gills,
+          while the third pumps blood to the rest of the body.
+          """
+
+          pipeline = KPipeline(lang_code="a")
+
+          generator = pipeline(
+              text,
+              voice="af_heart",
+              speed=1.0
+          )
+
+          parts = []
+
+          for _, _, audio in generator:
+              parts.append(audio)
+
+          audio = np.concatenate(parts)
+
+          sf.write(
+              "voice.wav",
+              audio,
+              24000
+          )
+
+          print("Voice generated!")
+          PY
+
+      - name: Create vertical Short
+        run: |
+          ffmpeg \
+            -i animal.mp4 \
+            -i voice.wav \
+            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[v]" \
+            -map "[v]" \
+            -map 1:a \
+            -c:v libx264 \
+            -preset veryfast \
+            -crf 23 \
+            -c:a aac \
+            -shortest \
+            -movflags +faststart \
+            final-test-short.mp4
+
+      - name: Upload final video
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-test-short
+          path: final-test-short.mp4
