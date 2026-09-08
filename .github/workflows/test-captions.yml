@@ -1,0 +1,35 @@
+name: Test Captions
+
+on:
+  workflow_dispatch:
+
+jobs:
+  captions:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install FFmpeg and Whisper
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          pip install openai-whisper
+
+      - name: Create test audio
+        run: |
+          ffmpeg \
+            -f lavfi \
+            -i "sine=frequency=440:duration=5" \
+            -ar 16000 \
+            -ac 1 \
+            test-audio.wav
+
+      - name: Test Whisper
+        run: |
+          whisper test-audio.wav \
+            --model tiny.en \
+            --output_format srt \
+            --output_dir captions
+
+      - name: Show captions
+        run: |
+          cat captions/test-audio.srt
