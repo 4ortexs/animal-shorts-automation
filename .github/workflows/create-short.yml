@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v5
 
@@ -18,7 +19,7 @@ jobs:
           pip install "kokoro>=0.9.4" soundfile openai-whisper
 
       # ============================================================
-      # 1. GEMINI — CREATE TOPIC + SCRIPT
+      # 1. GEMINI
       # ============================================================
 
       - name: Generate script with Gemini
@@ -46,7 +47,8 @@ jobs:
               used_topics = []
 
           used_topics_text = "\n".join(
-              f"- {topic}" for topic in used_topics
+              "- " + str(topic)
+              for topic in used_topics
           )
 
           if not used_topics_text:
@@ -71,45 +73,18 @@ jobs:
           - Natural English suitable for male TTS narration.
           - Approximately 35-45 seconds.
           - Identify ONE primary animal species or clearly defined animal.
-          - Prefer animals that have abundant real-world stock footage.
-          - Prefer recognizable animals with good availability on Pixabay.
+          - Prefer recognizable animals with abundant stock footage.
+          - Prefer animals likely to have real footage on Pixabay.
           - Avoid extremely obscure animals when possible.
-          - Avoid animals for which it is unlikely that real video footage
-            exists on Pixabay.
-          - The entire Short should visually focus on the same animal.
+          - Keep the whole video visually focused on the same animal.
           - Exactly 5 visual scene search terms.
           - Every search term MUST contain the primary animal name.
           - Search terms must describe real animal footage.
-          - Do NOT use abstract concepts as search terms.
           - Do NOT use generic searches such as:
             "wildlife", "nature", "animal footage",
             "beautiful animals", or "wild animals".
           - No background music.
           - Do not invent statistics.
-
-          Good example:
-
-          Animal:
-          octopus
-
-          Search terms:
-          octopus underwater swimming
-          octopus close up ocean
-          octopus crawling seafloor
-          octopus hiding underwater
-          octopus moving tentacles
-
-          Bad example:
-
-          Animal:
-          octopus
-
-          Search terms:
-          ocean life
-          sea animals
-          underwater nature
-          marine wildlife
-          animal facts
 
           Return ONLY valid JSON:
 
@@ -183,7 +158,6 @@ jobs:
               )
 
           for term in output["search_terms"]:
-
               if animal not in term.lower():
                   raise SystemExit(
                       "Search term does not contain the primary animal: "
@@ -193,8 +167,7 @@ jobs:
           new_topic = output["topic"].strip().lower()
 
           for old_topic in used_topics:
-
-              if new_topic == old_topic.strip().lower():
+              if new_topic == str(old_topic).strip().lower():
                   raise SystemExit(
                       "DUPLICATE TOPIC DETECTED."
                   )
@@ -211,9 +184,7 @@ jobs:
                   indent=2
               )
 
-          used_topics.append(
-              output["topic"]
-          )
+          used_topics.append(output["topic"])
 
           with open(
               topics_file,
@@ -243,7 +214,7 @@ jobs:
           PY
 
       # ============================================================
-      # 2. KOKORO — MALE VOICE
+      # 2. KOKORO MALE VOICE
       # ============================================================
 
       - name: Generate male voice
@@ -276,6 +247,11 @@ jobs:
           for _, _, audio in generator:
               parts.append(audio)
 
+          if not parts:
+              raise SystemExit(
+                  "Kokoro did not generate audio."
+              )
+
           audio = np.concatenate(parts)
 
           sf.write(
@@ -289,7 +265,7 @@ jobs:
           PY
 
       # ============================================================
-      # 3. PIXABAY — SEARCH + RELEVANCE SCORING
+      # 3. PIXABAY
       # ============================================================
 
       - name: Download relevant Pixabay clips
@@ -422,8 +398,6 @@ jobs:
                       )
                   )
 
-                  score = 0
-
                   normalized_tags = " ".join(
                       re.findall(
                           r"[a-z]+",
@@ -438,11 +412,11 @@ jobs:
                       )
                   )
 
-                  # Exact animal phrase.
+                  score = 0
+
                   if normalized_animal in normalized_tags:
                       score += 200
 
-                  # Distinctive animal words.
                   matched_distinctive = (
                       distinctive_words.intersection(
                           tag_words
@@ -454,7 +428,6 @@ jobs:
                       * 100
                   )
 
-                  # Search-term similarity.
                   score += len(
                       search_words.intersection(
                           tag_words
@@ -466,11 +439,9 @@ jobs:
                       selected = video
 
               if selected is None:
-
                   print(
                       "No Pixabay results found."
                   )
-
                   continue
 
               selected_tags = str(
@@ -487,8 +458,6 @@ jobs:
                   )
               )
 
-              # If the animal has a distinctive name,
-              # require at least one distinctive word.
               if distinctive_words:
 
                   if not distinctive_words.intersection(
@@ -496,9 +465,8 @@ jobs:
                   ):
 
                       print(
-                          "Pixabay returned results, "
-                          "but they were not confidently "
-                          "matched to the animal."
+                          "Pixabay results were found, "
+                          "but no confident animal match."
                       )
 
                       print(
@@ -553,7 +521,7 @@ jobs:
                       )
 
               print(
-                  "Downloaded relevant scene",
+                  "Downloaded scene",
                   index
               )
 
@@ -564,8 +532,10 @@ jobs:
           if downloaded < 3:
 
               raise SystemExit(
-                  f"Only {downloaded} relevant Pixabay "
-                  "clips were found. At least 3 are required."
+                  "Only "
+                  + str(downloaded)
+                  + " relevant Pixabay clips were found. "
+                  "At least 3 are required."
               )
 
           print("")
@@ -587,17 +557,10 @@ jobs:
                       filename
                   )
 
-          print("")
-          print(
-              "Successfully downloaded",
-              downloaded,
-              "relevant clips."
-          )
-
           PY
 
       # ============================================================
-      # 4. NORMALIZE + COMBINE VIDEO
+      # 4. NORMALIZE + COMBINE
       # ============================================================
 
       - name: Normalize and combine footage
@@ -634,20 +597,22 @@ jobs:
           )
 
           if not files:
-
               raise SystemExit(
                   "No normalized clips were created."
               )
 
           with open(
               "clips.txt",
-              "w"
+              "w",
+              encoding="utf-8"
           ) as f:
 
               for filename in files:
 
                   f.write(
-                      f"file '{os.path.abspath(filename)}'\n"
+                      "file '"
+                      + os.path.abspath(filename)
+                      + "'\n"
                   )
 
           print(
@@ -669,7 +634,7 @@ jobs:
             combined.mp4
 
       # ============================================================
-      # 5. WHISPER — CREATE SRT
+      # 5. WHISPER
       # ============================================================
 
       - name: Generate Whisper captions
@@ -686,28 +651,31 @@ jobs:
           cat captions/voice.srt
 
       # ============================================================
-      # 6. SRT → ASS
+      # 6. SRT TO ASS
       # ============================================================
 
       - name: Convert captions to ASS
         run: |
           python - <<'PY'
           import re
-          import textwrap
 
-          def ass_time(s):
+          def ass_time(timestamp):
+              timestamp = timestamp.strip()
 
-              h, m, rest = s.split(":")
+              hours, minutes, rest = timestamp.split(":")
 
-              sec, ms = rest.split(",")
+              seconds, milliseconds = rest.split(",")
 
-              cs = int(ms) // 10
+              centiseconds = int(milliseconds) // 10
 
               return (
-                  f"{int(h)}:"
-                  f"{int(m):02d}:"
-                  f"{int(sec):02d}."
-                  f"{cs:02d}"
+                  str(int(hours))
+                  + ":"
+                  + str(int(minutes)).zfill(2)
+                  + ":"
+                  + str(int(seconds)).zfill(2)
+                  + "."
+                  + str(centiseconds).zfill(2)
               )
 
           with open(
@@ -716,28 +684,61 @@ jobs:
               encoding="utf-8"
           ) as f:
 
-              text = f.read()
+              srt_text = f.read()
 
           blocks = re.split(
               r"\n\s*\n",
-              text.strip()
+              srt_text.strip()
           )
 
-          ass = textwrap.dedent(
-              """\
-              [Script Info]
-              ScriptType: v4.00+
-              PlayResX: 1080
-              PlayResY: 1920
-              Collisions: Normal
+          ass_lines = []
 
-              [V4+ Styles]
-              Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-              Style: Default,DejaVu Sans,58,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,2,80,80,260,1
+          ass_lines.append(
+              "[Script Info]"
+          )
 
-              [Events]
-              Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-              """
+          ass_lines.append(
+              "ScriptType: v4.00+"
+          )
+
+          ass_lines.append(
+              "PlayResX: 1080"
+          )
+
+          ass_lines.append(
+              "PlayResY: 1920"
+          )
+
+          ass_lines.append(
+              "Collisions: Normal"
+          )
+
+          ass_lines.append(
+              ""
+          )
+
+          ass_lines.append(
+              "[V4+ Styles]"
+          )
+
+          ass_lines.append(
+              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"
+          )
+
+          ass_lines.append(
+              "Style: Default,DejaVu Sans,58,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,2,80,80,260,1"
+          )
+
+          ass_lines.append(
+              ""
+          )
+
+          ass_lines.append(
+              "[Events]"
+          )
+
+          ass_lines.append(
+              "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
           )
 
           for block in blocks:
@@ -761,20 +762,33 @@ jobs:
                   for line in lines[2:]
               )
 
-              caption = (
-                  caption
-                  .replace(
-                      "{",
-                      "("
-                  )
-                  .replace(
-                      "}",
-                      ")"
-                  )
+              caption = caption.replace(
+                  "{",
+                  "("
               )
 
-              ass += (
-                  f"Dialogue: 0,"
-                  f"{ass_time(start)},"
-                  f"{ass_time(end)},"
-               
+              caption = caption.replace(
+                  "}",
+                  ")"
+              )
+
+              dialogue = (
+                  "Dialogue: 0,"
+                  + ass_time(start)
+                  + ","
+                  + ass_time(end)
+                  + ",Default,,0,0,0,,"
+                  + caption
+              )
+
+              ass_lines.append(
+                  dialogue
+              )
+
+          ass_text = "\n".join(
+              ass_lines
+          ) + "\n"
+
+          with open(
+              "captions/voice.ass",
+  
