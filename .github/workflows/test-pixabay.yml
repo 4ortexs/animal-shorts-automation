@@ -1,0 +1,70 @@
+name: Test Pixabay
+
+on:
+  workflow_dispatch:
+
+jobs:
+  pixabay:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Search Pixabay Videos
+        env:
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.parse
+
+          API_KEY = os.environ["PIXABAY_API_KEY"]
+
+          query = urllib.parse.quote("octopus")
+
+          url = (
+              "https://pixabay.com/api/videos/"
+              f"?key={API_KEY}"
+              f"&q={query}"
+              "&category=animals"
+              "&safesearch=true"
+              "&per_page=5"
+          )
+
+          req = urllib.request.Request(
+              url,
+              method="GET"
+          )
+
+          try:
+              with urllib.request.urlopen(req) as response:
+                  data = json.loads(
+                      response.read().decode("utf-8")
+                  )
+
+          except urllib.error.HTTPError as e:
+              print("HTTP ERROR:", e.code)
+              print(e.read().decode("utf-8"))
+              raise
+
+          videos = data.get("hits", [])
+
+          if not videos:
+              raise SystemExit("No videos found.")
+
+          print("")
+          print("========== PIXABAY SUCCESS ==========")
+          print("")
+          print("Found", len(videos), "videos.")
+          print("")
+
+          for i, video in enumerate(videos, 1):
+              print(f"VIDEO {i}")
+              print("ID:", video["id"])
+              print("Duration:", video["duration"], "seconds")
+              print("Page:", video["pageURL"])
+              print("Medium video:", video["videos"]["medium"]["url"])
+              print("")
+
+          print("Pixabay Video API is working!")
+          PY
