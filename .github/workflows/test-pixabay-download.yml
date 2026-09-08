@@ -31,7 +31,12 @@ jobs:
               "&per_page=5"
           )
 
-          req = urllib.request.Request(search_url)
+          req = urllib.request.Request(
+              search_url,
+              headers={
+                  "User-Agent": "Mozilla/5.0"
+              }
+          )
 
           with urllib.request.urlopen(req) as response:
               data = json.loads(
@@ -44,24 +49,29 @@ jobs:
               raise SystemExit("No videos found.")
 
           video = videos[0]
-
           video_url = video["videos"]["medium"]["url"]
 
           print("Found video:")
           print(video_url)
-
           print("")
           print("Downloading...")
 
-          urllib.request.urlretrieve(
-              video_url,
-              "octopus-test.mp4"
-          )
+          with open("video_url.txt", "w") as f:
+              f.write(video_url)
 
-          print("")
-          print("DOWNLOAD SUCCESS!")
-          print("File: octopus-test.mp4")
+          print("URL saved.")
           PY
+
+          VIDEO_URL=$(cat video_url.txt)
+
+          curl -L \
+            -A "Mozilla/5.0" \
+            -o octopus-test.mp4 \
+            "$VIDEO_URL"
+
+          echo ""
+          echo "DOWNLOAD SUCCESS!"
+          ls -lh octopus-test.mp4
 
       - name: Upload Video
         uses: actions/upload-artifact@v4
