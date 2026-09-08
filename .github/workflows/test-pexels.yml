@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Search Pexels
+      - name: Test Pexels Photos API
         env:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: |
@@ -23,7 +23,7 @@ jobs:
           query = urllib.parse.quote("octopus")
 
           url = (
-              "https://api.pexels.com/v1/videos/search"
+              "https://api.pexels.com/v1/search"
               f"?query={query}"
               "&orientation=portrait"
               "&per_page=5"
@@ -33,29 +33,38 @@ jobs:
               url,
               headers={
                   "Authorization": API_KEY
-              }
+              },
+              method="GET"
           )
 
-          with urllib.request.urlopen(req) as response:
-              data = json.loads(response.read().decode("utf-8"))
+          try:
+              with urllib.request.urlopen(req) as response:
+                  data = json.loads(
+                      response.read().decode("utf-8")
+                  )
 
-          videos = data.get("videos", [])
+          except urllib.error.HTTPError as e:
+              print("HTTP ERROR:", e.code)
+              print(e.read().decode("utf-8"))
+              raise
 
-          if not videos:
-              raise SystemExit("No videos found.")
+          photos = data.get("photos", [])
+
+          if not photos:
+              raise SystemExit("No photos found.")
 
           print("")
           print("========== PEXELS SUCCESS ==========")
           print("")
-          print("Found", len(videos), "videos.")
+          print("Found", len(photos), "photos.")
           print("")
 
-          for i, video in enumerate(videos, 1):
-              print(f"VIDEO {i}")
-              print("ID:", video["id"])
-              print("URL:", video["url"])
-              print("Duration:", video["duration"], "seconds")
+          for i, photo in enumerate(photos, 1):
+              print(f"PHOTO {i}")
+              print("ID:", photo["id"])
+              print("URL:", photo["url"])
+              print("Photographer:", photo["photographer"])
               print("")
 
-          print("Pexels API is working!")
+          print("Pexels Photos API is working!")
           PY
