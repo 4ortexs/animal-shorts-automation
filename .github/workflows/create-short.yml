@@ -1,0 +1,303 @@
+name: Create Animal Short
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng
+          pip install "kokoro>=0.9.4" soundfile openai-whisper
+
+      - name: Generate script with Gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          import json
+          import urllib.request
+
+          API_KEY = os.environ["GEMINI_API_KEY"]
+
+          URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent"
+
+          topics_file = "data/used_topics.json"
+
+          try:
+              with open(topics_file, "r", encoding="utf-8") as f:
+                  used_topics = json.load(f)
+          except Exception:
+              used_topics = []
+
+          used_topics_text = "\n".join(
+              f"- {topic}" for topic in used_topics
+          )
+
+          if not used_topics_text:
+              used_topics_text = "No topics have been used yet."
+
+          prompt = f"""
+          You are the content engine for an educational YouTube Shorts
+          channel about animals and wildlife.
+
+          Choose ONE NEW animal fact for a 30-45 second YouTube Short.
+
+          Previously used topics:
+          {used_topics_text}
+
+          Do NOT repeat any previous topic or essentially the same idea.
+
+          Requirements:
+          - Scientifically accurate.
+          - Interesting and surprising.
+          - No myths or unsupported claims.
+          - Natural English suitable for TTS.
+          - Approximately 35-45 seconds.
+          - Exactly 5 visual search keywords.
+          - No background music.
+          - Do not invent statistics.
+
+          Return ONLY valid JSON:
+
+          {{
+            "topic": "...",
+            "title": "...",
+            "script": "...",
+            "search_terms": [
+              "...",
+              "...",
+              "...",
+              "...",
+              "..."
+            ],
+            "hashtags": [
+              "#animals",
+              "#science",
+              "#nature",
+              "#facts",
+              "#wildlife"
+            ]
+          }}
+          """
+
+          data = {
+              "contents": [
+                  {
+                      "parts": [
+                          {
+                              "text": prompt
+                          }
+                      ]
+                  }
+              ],
+              "generationConfig": {
+                  "temperature": 0.4,
+                  "responseMimeType": "application/json"
+              }
+          }
+
+          req = urllib.request.Request(
+              URL,
+              data=json.dumps(data).encode("utf-8"),
+              headers={
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": API_KEY
+              },
+              method="POST"
+          )
+
+          with urllib.request.urlopen(req) as response:
+              result = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          text = result["candidates"][0]["content"]["parts"][0]["text"]
+
+          output = json.loads(text)
+
+          new_topic = output["topic"].strip().lower()
+
+          for old_topic in used_topics:
+              if new_topic == old_topic.strip().lower():
+                  raise SystemExit("DUPLICATE TOPIC DETECTED.")
+
+          if len(output["search_terms"]) != 5:
+              raise SystemExit("Gemini did not provide exactly 5 search terms.")
+
+          with open("short_data.json", "w", encoding="utf-8") as f:
+              json.dump(output, f, ensure_ascii=False, indent=2)
+
+          used_topics.append(output["topic"])
+
+          with open(topics_file, "w", encoding="utf-8") as f:
+              json.dump(
+                  used_topics,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+
+          print("========== GEMINI SUCCESS ==========")
+          print("TOPIC:", output["topic"])
+          print("TITLE:", output["title"])
+          print("SCRIPT:", output["script"])
+          print("SEARCH TERMS:", output["search_terms"])
+          PY
+
+      - name: Generate voice
+        run: |
+          python - <<'PY'
+          import json
+          import numpy as np
+          import soundfile as sf
+          from kokoro import KPipeline
+
+          with open("short_data.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          pipeline = KPipeline(lang_code="a")
+
+          generator = pipeline(
+              data["script"],
+              voice="af_heart",
+              speed=1.0
+          )
+
+          parts = []
+
+          for _, _, audio in generator:
+              parts.append(audio)
+
+          audio = np.concatenate(parts)
+
+          sf.write(
+              "voice.wav",
+              audio,
+              24000
+          )
+
+          print("Kokoro voice created successfully!")
+          PY
+
+      - name: Download Pixabay footage
+        env:
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.parse
+
+          API_KEY = os.environ["PIXABAY_API_KEY"]
+
+          with open("short_data.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          search_term = data["search_terms"][0]
+
+          query = urllib.parse.quote(search_term)
+
+          url = (
+              "https://pixabay.com/api/videos/"
+              f"?key={API_KEY}"
+              f"&q={query}"
+              "&category=animals"
+              "&safesearch=true"
+              "&per_page=5"
+          )
+
+          req = urllib.request.Request(
+              url,
+              headers={"User-Agent": "Mozilla/5.0"}
+          )
+
+          with urllib.request.urlopen(req) as response:
+              result = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          videos = result.get("hits", [])
+
+          if not videos:
+              raise SystemExit(
+                  f"No Pixabay footage found for: {search_term}"
+              )
+
+          video_url = videos[0]["videos"]["medium"]["url"]
+
+          print("SEARCH:", search_term)
+          print("VIDEO:", video_url)
+
+          req = urllib.request.Request(
+              video_url,
+              headers={"User-Agent": "Mozilla/5.0"}
+          )
+
+          with urllib.request.urlopen(req) as response:
+              with open("animal.mp4", "wb") as f:
+                  f.write(response.read())
+
+          print("Pixabay footage downloaded!")
+          PY
+
+      - name: Generate captions
+        run: |
+          mkdir -p captions
+
+          whisper voice.wav \
+            --model tiny.en \
+            --output_format srt \
+            --output_dir captions
+
+          echo "========== CAPTIONS =========="
+          cat captions/voice.srt
+
+      - name: Create final Short
+        run: |
+          ffmpeg \
+            -i animal.mp4 \
+            -i voice.wav \
+            -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,subtitles=captions/voice.srt:force_style='FontName=DejaVu Sans,FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Shadow=1,Alignment=2,MarginV=300'" \
+            -map 0:v \
+            -map 1:a \
+            -c:v libx264 \
+            -preset veryfast \
+            -crf 23 \
+            -c:a aac \
+            -shortest \
+            -movflags +faststart \
+            animal-short.mp4
+
+          echo "========== VIDEO CREATED =========="
+          ls -lh animal-short.mp4
+
+      - name: Upload final Short
+        uses: actions/upload-artifact@v4
+        with:
+          name: animal-short
+          path: |
+            animal-short.mp4
+            short_data.json
+            captions/voice.srt
+
+      - name: Save topic history
+        run: |
+          git config user.name "animal-shorts-bot"
+          git config user.email "animal-shorts-bot@users.noreply.github.com"
+
+          git add data/used_topics.json
+
+          git diff --cached --quiet || \
+            git commit -m "Update used animal topics"
+
+          git push
