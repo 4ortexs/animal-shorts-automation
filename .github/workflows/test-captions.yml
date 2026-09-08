@@ -1,4 +1,4 @@
-name: Test Captions
+name: Test Real Captions
 
 on:
   workflow_dispatch:
@@ -8,28 +8,85 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install FFmpeg and Whisper
+      - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          pip install openai-whisper
+          sudo apt-get install -y ffmpeg espeak-ng
+          pip install "kokoro>=0.9.4" soundfile openai-whisper
 
-      - name: Create test audio
+      - name: Generate Kokoro voice
         run: |
-          ffmpeg \
-            -f lavfi \
-            -i "sine=frequency=440:duration=5" \
-            -ar 16000 \
-            -ac 1 \
-            test-audio.wav
+          python - <<'PY'
+          from kokoro import KPipeline
+          import soundfile as sf
+          import numpy as np
 
-      - name: Test Whisper
+          text = """
+          Did you know that octopuses have three hearts?
+          Two hearts pump blood to the gills,
+          while the third pumps blood to the rest of the body.
+          """
+
+          pipeline = KPipeline(lang_code="a")
+
+          generator = pipeline(
+              text,
+              voice="af_heart",
+              speed=1.0
+          )
+
+          parts = []
+
+          for _, _, audio in generator:
+              parts.append(audio)
+
+          audio = np.concatenate(parts)
+
+          sf.write("voice.wav", audio, 24000)
+
+          print("Kokoro voice created!")
+          PY
+
+      - name: Create captions with Whisper
         run: |
-          whisper test-audio.wav \
+          mkdir -p captions
+
+          whisper voice.wav \
             --model tiny.en \
             --output_format srt \
             --output_dir captions
 
-      - name: Show captions
+          echo "========== CAPTIONS =========="
+          cat captions/voice.srt
+
+      - name: Create test background
         run: |
-          cat captions/test-audio.srt
+          ffmpeg \
+            -f lavfi \
+            -i "color=c=black:s=1080x1920:d=10" \
+            -t 10 \
+            -c:v libx264 \
+            -pix_fmt yuv420p \
+            background.mp4
+
+      - name: Add captions to video
+        run: |
+          ffmpeg \
+            -i background.mp4 \
+            -i voice.wav \
+            -vf "subtitles=captions/voice.srt:force_style='FontSize=18,Alignment=2,MarginV=300'" \
+            -map 0:v \
+            -map 1:a \
+            -c:v libx264 \
+            -c:a aac \
+            -shortest \
+            -movflags +faststart \
+            captions-test.mp4
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: captions-test
+          path: |
+            captions-test.mp4
+            captions/voice.srt
