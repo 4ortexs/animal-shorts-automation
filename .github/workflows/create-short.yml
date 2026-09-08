@@ -49,7 +49,7 @@ jobs:
           You are the content engine for an educational YouTube Shorts
           channel about animals and wildlife.
 
-          Choose ONE NEW animal fact for a 30-45 second YouTube Short.
+          Choose ONE NEW animal fact for a 35-45 second YouTube Short.
 
           Previously used topics:
           {used_topics_text}
@@ -63,9 +63,18 @@ jobs:
           - No myths or unsupported claims.
           - Natural English suitable for male TTS narration.
           - Approximately 35-45 seconds.
-          - Exactly 5 visual scene search terms.
-          - Each search term must describe real animal footage
-            that could reasonably be found on Pixabay.
+          - Identify ONE primary animal species or animal group.
+          - All visual footage must show this same animal or clearly related
+            footage of this animal.
+          - Create exactly 5 very specific Pixabay search terms.
+          - Every search term MUST contain the primary animal name.
+          - Search terms should describe real footage, not concepts.
+          - Example for an octopus:
+            "octopus underwater swimming"
+            "octopus close up ocean"
+            "octopus crawling seafloor"
+          - Do NOT use generic searches such as "wildlife", "nature",
+            "ocean animals", "animal footage", or "beautiful animals".
           - No background music.
           - Do not invent statistics.
 
@@ -73,6 +82,7 @@ jobs:
 
           {{
             "topic": "...",
+            "animal": "...",
             "title": "...",
             "script": "...",
             "search_terms": [
@@ -132,6 +142,19 @@ jobs:
                   "Gemini did not provide exactly 5 search terms."
               )
 
+          animal = output["animal"].strip().lower()
+
+          if not animal:
+              raise SystemExit(
+                  "Gemini did not provide an animal."
+              )
+
+          for term in output["search_terms"]:
+              if animal not in term.lower():
+                  raise SystemExit(
+                      f"Search term does not contain the primary animal: {term}"
+                  )
+
           new_topic = output["topic"].strip().lower()
 
           for old_topic in used_topics:
@@ -160,8 +183,12 @@ jobs:
 
           print("========== GEMINI SUCCESS ==========")
           print("TOPIC:", output["topic"])
+          print("ANIMAL:", output["animal"])
           print("TITLE:", output["title"])
-          print("SCRIPT:", output["script"])
+          print("")
+          print("SCRIPT:")
+          print(output["script"])
+          print("")
           print("SEARCH TERMS:")
 
           for term in output["search_terms"]:
@@ -203,7 +230,7 @@ jobs:
           print("Male Kokoro voice created!")
           PY
 
-      - name: Download five Pixabay clips
+      - name: Download relevant Pixabay clips
         env:
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
         run: |
@@ -213,13 +240,21 @@ jobs:
           import urllib.request
           import urllib.parse
           import time
+          import re
 
           API_KEY = os.environ["PIXABAY_API_KEY"]
 
           with open("short_data.json", "r", encoding="utf-8") as f:
               data = json.load(f)
 
+          animal = data["animal"].lower()
           search_terms = data["search_terms"]
+
+          animal_words = set(
+              re.findall(r"[a-z]+", animal)
+          )
+
+          downloaded = 0
 
           for index, search_term in enumerate(search_terms, 1):
 
@@ -235,7 +270,7 @@ jobs:
                   f"&q={query}"
                   "&category=animals"
                   "&safesearch=true"
-                  "&per_page=5"
+                  "&per_page=20"
               )
 
               req = urllib.request.Request(
@@ -250,12 +285,31 @@ jobs:
 
               videos = result.get("hits", [])
 
-              if not videos:
-                  print("No footage found. Skipping this scene.")
+              selected = None
+
+              for video in videos:
+
+                  tags = str(
+                      video.get("tags", "")
+                  ).lower()
+
+                  tag_words = set(
+                      re.findall(r"[a-z]+", tags)
+                  )
+
+                  if animal_words.intersection(tag_words):
+                      selected = video
+                      break
+
+              if selected is None:
+                  print(
+                      "No sufficiently relevant footage found for this scene."
+                  )
                   continue
 
-              video_url = videos[0]["videos"]["medium"]["url"]
+              video_url = selected["videos"]["medium"]["url"]
 
+              print("MATCHED TAGS:", selected.get("tags", ""))
               print("VIDEO:", video_url)
 
               req = urllib.request.Request(
@@ -270,12 +324,19 @@ jobs:
                   ) as f:
                       f.write(response.read())
 
-              print("Downloaded scene", index)
+              print("Downloaded relevant scene", index)
+
+              downloaded += 1
 
               time.sleep(1)
 
+          if downloaded == 0:
+              raise SystemExit(
+                  "No relevant Pixabay footage was found."
+              )
+
           print("")
-          print("Downloaded files:")
+          print("========== DOWNLOADED SCENES ==========")
 
           for i in range(1, 6):
               filename = f"scene_{i}.mp4"
@@ -284,22 +345,40 @@ jobs:
                   print(filename)
           PY
 
-      - name: Create combined footage
+      - name: Normalize and combine footage
         run: |
+          mkdir -p normalized
+
+          for file in scene_*.mp4; do
+
+            [ -e "$file" ] || continue
+
+            name=$(basename "$file" .mp4)
+
+            ffmpeg \
+              -y \
+              -i "$file" \
+              -t 8 \
+              -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30" \
+              -an \
+              -c:v libx264 \
+              -preset veryfast \
+              -crf 23 \
+              "normalized/${name}.mp4"
+
+          done
+
           python - <<'PY'
+          import glob
           import os
 
-          files = []
-
-          for i in range(1, 6):
-              filename = f"scene_{i}.mp4"
-
-              if os.path.exists(filename):
-                  files.append(filename)
+          files = sorted(
+              glob.glob("normalized/scene_*.mp4")
+          )
 
           if not files:
               raise SystemExit(
-                  "No Pixabay clips were downloaded."
+                  "No normalized clips were created."
               )
 
           with open("clips.txt", "w") as f:
@@ -308,18 +387,19 @@ jobs:
                       f"file '{os.path.abspath(filename)}'\n"
                   )
 
-          print("Clips to combine:")
+          print("Normalized clips:")
           print("\n".join(files))
           PY
 
           ffmpeg \
+            -y \
             -f concat \
             -safe 0 \
             -i clips.txt \
             -c copy \
             combined.mp4
 
-      - name: Generate captions
+      - name: Generate Whisper captions
         run: |
           mkdir -p captions
 
@@ -328,15 +408,99 @@ jobs:
             --output_format srt \
             --output_dir captions
 
-          echo "========== CAPTIONS =========="
+          echo "========== WHISPER SRT =========="
           cat captions/voice.srt
+
+      - name: Convert captions to ASS
+        run: |
+          python - <<'PY'
+          import re
+
+          def ass_time(s):
+              h, m, rest = s.split(":")
+              sec, ms = rest.split(",")
+              cs = int(ms) // 10
+              return f"{int(h)}:{int(m):02d}:{int(sec):02d}.{cs:02d}"
+
+          with open(
+              "captions/voice.srt",
+              "r",
+              encoding="utf-8"
+          ) as f:
+              text = f.read()
+
+          blocks = re.split(
+              r"\n\s*\n",
+              text.strip()
+          )
+
+          ass = """[Script Info]
+          ScriptType: v4.00+
+          PlayResX: 1080
+          PlayResY: 1920
+          Collisions: Normal
+
+          [V4+ Styles]
+          Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+          Style: Default,DejaVu Sans,58,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,2,80,80,260,1
+
+          [Events]
+          Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+          """
+
+          for block in blocks:
+
+              lines = block.splitlines()
+
+              if len(lines) < 3:
+                  continue
+
+              timing = lines[1]
+
+              if " --> " not in timing:
+                  continue
+
+              start, end = timing.split(" --> ")
+
+              caption = " ".join(
+                  line.strip()
+                  for line in lines[2:]
+              )
+
+              caption = caption.replace(
+                  "{",
+                  "("
+              ).replace(
+                  "}",
+                  ")"
+              )
+
+              ass += (
+                  f"Dialogue: 0,"
+                  f"{ass_time(start)},"
+                  f"{ass_time(end)},"
+                  f"Default,,0,0,0,,"
+                  f"{caption}\n"
+              )
+
+          with open(
+              "captions/voice.ass",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              f.write(ass)
+
+          print("========== ASS CAPTIONS ==========")
+          print(ass)
+          PY
 
       - name: Create final vertical Short
         run: |
           ffmpeg \
+            -y \
             -i combined.mp4 \
             -i voice.wav \
-            -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,subtitles=captions/voice.srt:force_style='FontName=DejaVu Sans,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=4,Shadow=2,Alignment=2,MarginV=300'" \
+            -vf "ass=captions/voice.ass" \
             -map 0:v \
             -map 1:a \
             -c:v libx264 \
@@ -359,6 +523,7 @@ jobs:
             animal-short.mp4
             short_data.json
             captions/voice.srt
+            captions/voice.ass
 
       - name: Save topic history
         run: |
