@@ -57,12 +57,15 @@ jobs:
           Do NOT repeat any previous topic or essentially the same idea.
 
           Requirements:
+
           - Scientifically accurate.
           - Interesting and surprising.
           - No myths or unsupported claims.
-          - Natural English suitable for TTS.
+          - Natural English suitable for male TTS narration.
           - Approximately 35-45 seconds.
-          - Exactly 5 visual search keywords.
+          - Exactly 5 visual scene search terms.
+          - Each search term must describe real animal footage
+            that could reasonably be found on Pixabay.
           - No background music.
           - Do not invent statistics.
 
@@ -124,17 +127,26 @@ jobs:
 
           output = json.loads(text)
 
+          if len(output["search_terms"]) != 5:
+              raise SystemExit(
+                  "Gemini did not provide exactly 5 search terms."
+              )
+
           new_topic = output["topic"].strip().lower()
 
           for old_topic in used_topics:
               if new_topic == old_topic.strip().lower():
-                  raise SystemExit("DUPLICATE TOPIC DETECTED.")
-
-          if len(output["search_terms"]) != 5:
-              raise SystemExit("Gemini did not provide exactly 5 search terms.")
+                  raise SystemExit(
+                      "DUPLICATE TOPIC DETECTED."
+                  )
 
           with open("short_data.json", "w", encoding="utf-8") as f:
-              json.dump(output, f, ensure_ascii=False, indent=2)
+              json.dump(
+                  output,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
 
           used_topics.append(output["topic"])
 
@@ -150,10 +162,13 @@ jobs:
           print("TOPIC:", output["topic"])
           print("TITLE:", output["title"])
           print("SCRIPT:", output["script"])
-          print("SEARCH TERMS:", output["search_terms"])
+          print("SEARCH TERMS:")
+
+          for term in output["search_terms"]:
+              print("-", term)
           PY
 
-      - name: Generate voice
+      - name: Generate male voice
         run: |
           python - <<'PY'
           import json
@@ -168,7 +183,7 @@ jobs:
 
           generator = pipeline(
               data["script"],
-              voice="af_heart",
+              voice="am_adam",
               speed=1.0
           )
 
@@ -185,10 +200,10 @@ jobs:
               24000
           )
 
-          print("Kokoro voice created successfully!")
+          print("Male Kokoro voice created!")
           PY
 
-      - name: Download Pixabay footage
+      - name: Download five Pixabay clips
         env:
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
         run: |
@@ -197,58 +212,112 @@ jobs:
           import json
           import urllib.request
           import urllib.parse
+          import time
 
           API_KEY = os.environ["PIXABAY_API_KEY"]
 
           with open("short_data.json", "r", encoding="utf-8") as f:
               data = json.load(f)
 
-          search_term = data["search_terms"][0]
+          search_terms = data["search_terms"]
 
-          query = urllib.parse.quote(search_term)
+          for index, search_term in enumerate(search_terms, 1):
 
-          url = (
-              "https://pixabay.com/api/videos/"
-              f"?key={API_KEY}"
-              f"&q={query}"
-              "&category=animals"
-              "&safesearch=true"
-              "&per_page=5"
-          )
+              print("")
+              print("========== SCENE", index, "==========")
+              print("SEARCH:", search_term)
 
-          req = urllib.request.Request(
-              url,
-              headers={"User-Agent": "Mozilla/5.0"}
-          )
+              query = urllib.parse.quote(search_term)
 
-          with urllib.request.urlopen(req) as response:
-              result = json.loads(
-                  response.read().decode("utf-8")
+              url = (
+                  "https://pixabay.com/api/videos/"
+                  f"?key={API_KEY}"
+                  f"&q={query}"
+                  "&category=animals"
+                  "&safesearch=true"
+                  "&per_page=5"
               )
 
-          videos = result.get("hits", [])
-
-          if not videos:
-              raise SystemExit(
-                  f"No Pixabay footage found for: {search_term}"
+              req = urllib.request.Request(
+                  url,
+                  headers={"User-Agent": "Mozilla/5.0"}
               )
 
-          video_url = videos[0]["videos"]["medium"]["url"]
+              with urllib.request.urlopen(req) as response:
+                  result = json.loads(
+                      response.read().decode("utf-8")
+                  )
 
-          print("SEARCH:", search_term)
-          print("VIDEO:", video_url)
+              videos = result.get("hits", [])
 
-          req = urllib.request.Request(
-              video_url,
-              headers={"User-Agent": "Mozilla/5.0"}
-          )
+              if not videos:
+                  print("No footage found. Skipping this scene.")
+                  continue
 
-          with urllib.request.urlopen(req) as response:
-              with open("animal.mp4", "wb") as f:
-                  f.write(response.read())
+              video_url = videos[0]["videos"]["medium"]["url"]
 
-          print("Pixabay footage downloaded!")
+              print("VIDEO:", video_url)
+
+              req = urllib.request.Request(
+                  video_url,
+                  headers={"User-Agent": "Mozilla/5.0"}
+              )
+
+              with urllib.request.urlopen(req) as response:
+                  with open(
+                      f"scene_{index}.mp4",
+                      "wb"
+                  ) as f:
+                      f.write(response.read())
+
+              print("Downloaded scene", index)
+
+              time.sleep(1)
+
+          print("")
+          print("Downloaded files:")
+
+          for i in range(1, 6):
+              filename = f"scene_{i}.mp4"
+
+              if os.path.exists(filename):
+                  print(filename)
           PY
+
+      - name: Create combined footage
+        run: |
+          python - <<'PY'
+          import os
+
+          files = []
+
+          for i in range(1, 6):
+              filename = f"scene_{i}.mp4"
+
+              if os.path.exists(filename):
+                  files.append(filename)
+
+          if not files:
+              raise SystemExit(
+                  "No Pixabay clips were downloaded."
+              )
+
+          with open("clips.txt", "w") as f:
+              for filename in files:
+                  f.write(
+                      f"file '{os.path.abspath(filename)}'\n"
+                  )
+
+          print("Clips to combine:")
+          print("\n".join(files))
+          PY
+
+          ffmpeg \
+            -f concat \
+            -safe 0 \
+            -i clips.txt \
+            -c copy \
+            combined.mp4
 
       - name: Generate captions
         run: |
@@ -262,12 +331,12 @@ jobs:
           echo "========== CAPTIONS =========="
           cat captions/voice.srt
 
-      - name: Create final Short
+      - name: Create final vertical Short
         run: |
           ffmpeg \
-            -i animal.mp4 \
+            -i combined.mp4 \
             -i voice.wav \
-            -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,subtitles=captions/voice.srt:force_style='FontName=DejaVu Sans,FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Shadow=1,Alignment=2,MarginV=300'" \
+            -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,subtitles=captions/voice.srt:force_style='FontName=DejaVu Sans,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=4,Shadow=2,Alignment=2,MarginV=300'" \
             -map 0:v \
             -map 1:a \
             -c:v libx264 \
@@ -278,7 +347,8 @@ jobs:
             -movflags +faststart \
             animal-short.mp4
 
-          echo "========== VIDEO CREATED =========="
+          echo ""
+          echo "========== FINAL VIDEO =========="
           ls -lh animal-short.mp4
 
       - name: Upload final Short
