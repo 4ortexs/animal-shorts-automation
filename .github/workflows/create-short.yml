@@ -791,4 +791,80 @@ jobs:
 
           with open(
               "captions/voice.ass",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              f.write(
+                  ass_text
+              )
+
+          print(
+              "========== ASS CAPTIONS =========="
+          )
+
+          print(
+              ass_text
+          )
+
+          PY
+
+      # ============================================================
+      # 7. FINAL VIDEO
+      # ============================================================
+
+      - name: Create final vertical Short
+        run: |
+          ffmpeg \
+            -y \
+            -i combined.mp4 \
+            -i voice.wav \
+            -vf "ass=captions/voice.ass" \
+            -map 0:v \
+            -map 1:a \
+            -c:v libx264 \
+            -preset veryfast \
+            -crf 23 \
+            -c:a aac \
+            -shortest \
+            -movflags +faststart \
+            animal-short.mp4
+
+          echo ""
+          echo "========== FINAL VIDEO =========="
+
+          ls -lh animal-short.mp4
+
+      # ============================================================
+      # 8. ARTIFACT
+      # ============================================================
+
+      - name: Upload final Short
+        uses: actions/upload-artifact@v4
+        with:
+          name: animal-short
+          path: |
+            animal-short.mp4
+            short_data.json
+            captions/voice.srt
+            captions/voice.ass
+
+      # ============================================================
+      # 9. SAVE TOPIC HISTORY
+      # ============================================================
+
+      - name: Save topic history
+        run: |
+          git config user.name "animal-shorts-bot"
+
+          git config user.email \
+            "animal-shorts-bot@users.noreply.github.com"
+
+          git add data/used_topics.json
+
+          git diff --cached --quiet || \
+            git commit \
+            -m "Update used animal topics"
+
+          git push
   
