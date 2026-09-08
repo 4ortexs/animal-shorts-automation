@@ -1,0 +1,70 @@
+name: Test Pixabay Download
+
+on:
+  workflow_dispatch:
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Pixabay Video
+        env:
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.parse
+
+          API_KEY = os.environ["PIXABAY_API_KEY"]
+
+          query = urllib.parse.quote("octopus")
+
+          search_url = (
+              "https://pixabay.com/api/videos/"
+              f"?key={API_KEY}"
+              f"&q={query}"
+              "&category=animals"
+              "&safesearch=true"
+              "&per_page=5"
+          )
+
+          req = urllib.request.Request(search_url)
+
+          with urllib.request.urlopen(req) as response:
+              data = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          videos = data.get("hits", [])
+
+          if not videos:
+              raise SystemExit("No videos found.")
+
+          video = videos[0]
+
+          video_url = video["videos"]["medium"]["url"]
+
+          print("Found video:")
+          print(video_url)
+
+          print("")
+          print("Downloading...")
+
+          urllib.request.urlretrieve(
+              video_url,
+              "octopus-test.mp4"
+          )
+
+          print("")
+          print("DOWNLOAD SUCCESS!")
+          print("File: octopus-test.mp4")
+          PY
+
+      - name: Upload Video
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixabay-test-video
+          path: octopus-test.mp4
