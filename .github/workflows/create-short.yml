@@ -19,30 +19,144 @@ jobs:
           pip install "kokoro>=0.9.4" soundfile openai-whisper
 
       # ============================================================
-      # 1. GEMINI
+      # 1. GEMINI + PIXABAY TOPIC SELECTION
       # ============================================================
 
-      - name: Generate script with Gemini
+      - name: Generate topic and find matching footage
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
         run: |
           python - <<'PY'
           import os
           import json
           import urllib.request
+          import urllib.parse
+          import re
+          import time
+          import glob
 
-          API_KEY = os.environ["GEMINI_API_KEY"]
+          GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+          PIXABAY_API_KEY = os.environ["PIXABAY_API_KEY"]
 
-          URL = (
+          GEMINI_URL = (
               "https://generativelanguage.googleapis.com/v1beta/"
               "models/gemini-3.1-flash-lite:generateContent"
           )
 
-          topics_file = "data/used_topics.json"
+          TOPICS_FILE = "data/used_topics.json"
+
+          # --------------------------------------------------------
+          # FOOTAGE-RICH ANIMALS
+          # --------------------------------------------------------
+
+          FOOTAGE_RICH_ANIMALS = [
+              "frog",
+              "dog",
+              "cat",
+              "lion",
+              "tiger",
+              "elephant",
+              "giraffe",
+              "zebra",
+              "penguin",
+              "dolphin",
+              "shark",
+              "octopus",
+              "turtle",
+              "crocodile",
+              "snake",
+              "eagle",
+              "owl",
+              "bear",
+              "fox",
+              "wolf",
+              "deer",
+              "horse",
+              "rabbit",
+              "monkey",
+              "gorilla",
+              "chimpanzee",
+              "panda",
+              "koala",
+              "kangaroo",
+              "seal",
+              "whale",
+              "butterfly",
+              "bee",
+              "spider",
+              "crab",
+              "flamingo",
+              "parrot",
+              "pelican",
+              "swan",
+              "duck",
+              "goose"
+          ]
+
+          # --------------------------------------------------------
+          # COMPETING ANIMALS
+          # --------------------------------------------------------
+
+          COMPETING_ANIMALS = {
+              "bird",
+              "birds",
+              "eagle",
+              "owl",
+              "parrot",
+              "flamingo",
+              "pelican",
+              "swan",
+              "duck",
+              "goose",
+              "fish",
+              "shark",
+              "dolphin",
+              "whale",
+              "seal",
+              "turtle",
+              "snake",
+              "crocodile",
+              "frog",
+              "mammal",
+              "dog",
+              "cat",
+              "lion",
+              "tiger",
+              "elephant",
+              "giraffe",
+              "zebra",
+              "bear",
+              "fox",
+              "wolf",
+              "deer",
+              "horse",
+              "rabbit",
+              "monkey",
+              "gorilla",
+              "chimpanzee",
+              "panda",
+              "koala",
+              "kangaroo",
+              "octopus",
+              "crab",
+              "butterfly",
+              "bee",
+              "spider"
+          }
+
+          # --------------------------------------------------------
+          # LOAD USED TOPICS
+          # --------------------------------------------------------
 
           try:
-              with open(topics_file, "r", encoding="utf-8") as f:
+              with open(
+                  TOPICS_FILE,
+                  "r",
+                  encoding="utf-8"
+              ) as f:
                   used_topics = json.load(f)
+
           except Exception:
               used_topics = []
 
@@ -54,35 +168,70 @@ jobs:
           if not used_topics_text:
               used_topics_text = "No topics have been used yet."
 
-          prompt = f"""
+          # --------------------------------------------------------
+          # FUNCTIONS
+          # --------------------------------------------------------
+
+          def normalize_words(text):
+              return set(
+                  re.findall(
+                      r"[a-z]+",
+                      text.lower()
+                  )
+              )
+
+          def get_gemini_topic():
+              prompt = f"""
           You are the content engine for an educational YouTube Shorts
           channel about animals and wildlife.
 
-          Choose ONE NEW animal fact for a 35-45 second YouTube Short.
+          Choose ONE completely new animal fact for a 35-45 second
+          YouTube Short.
 
           Previously used topics:
           {used_topics_text}
 
-          Do NOT repeat any previous topic or essentially the same idea.
+          IMPORTANT:
+
+          The primary visual animal MUST be exactly one of these
+          footage-rich animals:
+
+          {", ".join(FOOTAGE_RICH_ANIMALS)}
+
+          Do NOT choose rare species or obscure animals.
+
+          The video can still explain a special fact about the animal,
+          but the visual animal must remain one of the animals above.
+
+          For example:
+          - You may make a video about a surprising frog adaptation.
+          - You may make a video about how octopuses use their arms.
+          - You may make a video about a strange shark ability.
+
+          But do NOT choose an obscure frog species as the primary
+          footage animal.
 
           Requirements:
 
           - Scientifically accurate.
           - Interesting and surprising.
-          - No myths or unsupported claims.
-          - Natural English suitable for male TTS narration.
+          - No myths.
+          - No unsupported claims.
+          - Natural English.
+          - Male TTS friendly.
           - Approximately 35-45 seconds.
-          - Identify ONE primary animal species or clearly defined animal.
-          - Prefer recognizable animals with abundant stock footage.
-          - Prefer animals likely to have real footage on Pixabay.
-          - Avoid extremely obscure animals when possible.
-          - Keep the whole video visually focused on the same animal.
-          - Exactly 5 visual scene search terms.
-          - Every search term MUST contain the primary animal name.
-          - Search terms must describe real animal footage.
-          - Do NOT use generic searches such as:
-            "wildlife", "nature", "animal footage",
-            "beautiful animals", or "wild animals".
+          - One primary animal.
+          - Strongly visual topic.
+          - The same animal should appear throughout the video.
+          - Exactly 5 visual search terms.
+          - Every search term MUST contain the exact primary animal.
+          - Search terms must describe real footage of that animal.
+          - No generic searches such as:
+            wildlife
+            nature
+            animals
+            animal footage
+            wild animals
           - No background music.
           - Do not invent statistics.
 
@@ -110,87 +259,608 @@ jobs:
           }}
           """
 
-          request_data = {
-              "contents": [
-                  {
-                      "parts": [
-                          {
-                              "text": prompt
-                          }
-                      ]
+              request_data = {
+                  "contents": [
+                      {
+                          "parts": [
+                              {
+                                  "text": prompt
+                              }
+                          ]
+                      }
+                  ],
+                  "generationConfig": {
+                      "temperature": 0.5,
+                      "responseMimeType": "application/json"
                   }
-              ],
-              "generationConfig": {
-                  "temperature": 0.4,
-                  "responseMimeType": "application/json"
               }
-          }
 
-          req = urllib.request.Request(
-              URL,
-              data=json.dumps(request_data).encode("utf-8"),
-              headers={
-                  "Content-Type": "application/json",
-                  "x-goog-api-key": API_KEY
-              },
-              method="POST"
-          )
-
-          with urllib.request.urlopen(req) as response:
-              result = json.loads(
-                  response.read().decode("utf-8")
+              req = urllib.request.Request(
+                  GEMINI_URL,
+                  data=json.dumps(
+                      request_data
+                  ).encode("utf-8"),
+                  headers={
+                      "Content-Type": "application/json",
+                      "x-goog-api-key": GEMINI_API_KEY
+                  },
+                  method="POST"
               )
 
-          text = result["candidates"][0]["content"]["parts"][0]["text"]
+              with urllib.request.urlopen(
+                  req
+              ) as response:
 
-          output = json.loads(text)
-
-          if len(output["search_terms"]) != 5:
-              raise SystemExit(
-                  "Gemini did not provide exactly 5 search terms."
-              )
-
-          animal = output["animal"].strip().lower()
-
-          if not animal:
-              raise SystemExit(
-                  "Gemini did not provide an animal."
-              )
-
-          for term in output["search_terms"]:
-              if animal not in term.lower():
-                  raise SystemExit(
-                      "Search term does not contain the primary animal: "
-                      + term
+                  result = json.loads(
+                      response.read().decode("utf-8")
                   )
 
-          new_topic = output["topic"].strip().lower()
+              text = (
+                  result["candidates"][0]
+                  ["content"]["parts"][0]["text"]
+              )
 
-          for old_topic in used_topics:
-              if new_topic == str(old_topic).strip().lower():
-                  raise SystemExit(
-                      "DUPLICATE TOPIC DETECTED."
+              data = json.loads(text)
+
+              return data
+
+          def find_pixabay_clips(data):
+
+              animal = data["animal"].strip().lower()
+
+              # Animal MUST be from our approved list.
+              if animal not in FOOTAGE_RICH_ANIMALS:
+                  print(
+                      "REJECTED ANIMAL:",
+                      animal
                   )
+                  return []
+
+              search_terms = data["search_terms"]
+
+              if len(search_terms) != 5:
+                  print(
+                      "Wrong number of search terms."
+                  )
+                  return []
+
+              # Verify every search term contains the animal.
+              for term in search_terms:
+
+                  if animal not in term.lower():
+
+                      print(
+                          "INVALID SEARCH TERM:",
+                          term
+                      )
+
+                      return []
+
+              selected_clips = []
+              selected_ids = set()
+
+              # ----------------------------------------------------
+              # SEARCH EACH SCENE
+              # ----------------------------------------------------
+
+              for scene_index, search_term in enumerate(
+                  search_terms,
+                  1
+              ):
+
+                  print("")
+                  print(
+                      "================================================"
+                  )
+                  print(
+                      "SCENE",
+                      scene_index
+                  )
+                  print(
+                      "SEARCH:",
+                      search_term
+                  )
+                  print(
+                      "================================================"
+                  )
+
+                  queries = [
+                      search_term,
+                      animal,
+                      animal + " close up",
+                      animal + " wild",
+                  ]
+
+                  scene_selected = None
+                  scene_score = -1
+
+                  for query_text in queries:
+
+                      if scene_selected is not None:
+                          break
+
+                      query = urllib.parse.quote(
+                          query_text
+                      )
+
+                      url = (
+                          "https://pixabay.com/api/videos/"
+                          f"?key={PIXABAY_API_KEY}"
+                          f"&q={query}"
+                          "&category=animals"
+                          "&safesearch=true"
+                          "&per_page=20"
+                          "&order=popular"
+                      )
+
+                      try:
+
+                          req = urllib.request.Request(
+                              url,
+                              headers={
+                                  "User-Agent":
+                                      "Mozilla/5.0"
+                              }
+                          )
+
+                          with urllib.request.urlopen(
+                              req
+                          ) as response:
+
+                              result = json.loads(
+                                  response.read().decode(
+                                      "utf-8"
+                                  )
+                              )
+
+                      except Exception as e:
+
+                          print(
+                              "Pixabay request failed:",
+                              e
+                          )
+
+                          continue
+
+                      videos = result.get(
+                          "hits",
+                          []
+                      )
+
+                      target_words = normalize_words(
+                          animal
+                      )
+
+                      query_words = normalize_words(
+                          query_text
+                      )
+
+                      for video in videos:
+
+                          video_id = video.get(
+                              "id"
+                          )
+
+                          if not video_id:
+                              continue
+
+                          if video_id in selected_ids:
+                              continue
+
+                          tags = str(
+                              video.get(
+                                  "tags",
+                                  ""
+                              )
+                          ).lower()
+
+                          tag_words = normalize_words(
+                              tags
+                          )
+
+                          # ------------------------------------------------
+                          # STRICT TARGET CHECK
+                          # ------------------------------------------------
+
+                          if animal not in tag_words:
+
+                              continue
+
+                          # ------------------------------------------------
+                          # REJECT CLEARLY COMPETING ANIMALS
+                          # ------------------------------------------------
+
+                          competing = (
+                              COMPETING_ANIMALS
+                              .intersection(
+                                  tag_words
+                              )
+                          )
+
+                          competing.discard(
+                              animal
+                          )
+
+                          # If another obvious animal is tagged,
+                          # reject the clip.
+                          if competing:
+
+                              print(
+                                  "Rejected competing animal:",
+                                  competing,
+                                  "|",
+                                  tags
+                              )
+
+                              continue
+
+                          # ------------------------------------------------
+                          # SCORE
+                          # ------------------------------------------------
+
+                          score = 0
+
+                          # Exact target animal
+                          score += 200
+
+                          # Search term similarity
+                          score += (
+                              len(
+                                  query_words
+                                  .intersection(
+                                      tag_words
+                                  )
+                              ) * 10
+                          )
+
+                          # Popularity
+                          score += min(
+                              int(
+                                  video.get(
+                                      "views",
+                                      0
+                                  )
+                              ) // 10000,
+                              20
+                          )
+
+                          # Duration preference
+                          duration = float(
+                              video.get(
+                                  "duration",
+                                  0
+                              )
+                          )
+
+                          if duration >= 8:
+                              score += 20
+
+                          if score > scene_score:
+
+                              scene_score = score
+                              scene_selected = video
+
+                      time.sleep(0.5)
+
+                  if scene_selected is None:
+
+                      print(
+                          "NO TRUSTED CLIP FOUND FOR SCENE",
+                          scene_index
+                      )
+
+                      continue
+
+                  video_id = scene_selected["id"]
+
+                  selected_ids.add(
+                      video_id
+                  )
+
+                  print(
+                      "SELECTED VIDEO ID:",
+                      video_id
+                  )
+
+                  print(
+                      "SELECTED TAGS:",
+                      scene_selected.get(
+                          "tags",
+                          ""
+                      )
+                  )
+
+                  print(
+                      "SOURCE:",
+                      scene_selected.get(
+                          "pageURL",
+                          ""
+                      )
+                  )
+
+                  video_url = (
+                      scene_selected
+                      ["videos"]
+                      ["medium"]
+                      ["url"]
+                  )
+
+                  output_file = (
+                      f"scene_{scene_index}.mp4"
+                  )
+
+                  download_req = urllib.request.Request(
+                      video_url,
+                      headers={
+                          "User-Agent":
+                              "Mozilla/5.0"
+                      }
+                  )
+
+                  try:
+
+                      with urllib.request.urlopen(
+                          download_req
+                      ) as response:
+
+                          with open(
+                              output_file,
+                              "wb"
+                          ) as f:
+
+                              f.write(
+                                  response.read()
+                              )
+
+                  except Exception as e:
+
+                      print(
+                          "Download failed:",
+                          e
+                      )
+
+                      continue
+
+                  selected_clips.append(
+                      {
+                          "scene": scene_index,
+                          "id": video_id,
+                          "tags": scene_selected.get(
+                              "tags",
+                              ""
+                          ),
+                          "pageURL": scene_selected.get(
+                              "pageURL",
+                              ""
+                          ),
+                          "file": output_file
+                      }
+                  )
+
+                  print(
+                      "Downloaded:",
+                      output_file
+                  )
+
+              return selected_clips
+
+          # --------------------------------------------------------
+          # RETRY UP TO 3 TIMES
+          # --------------------------------------------------------
+
+          MAX_ATTEMPTS = 3
+
+          final_data = None
+          final_clips = None
+
+          for attempt in range(
+              1,
+              MAX_ATTEMPTS + 1
+          ):
+
+              print("")
+              print(
+                  "################################################"
+              )
+              print(
+                  "ATTEMPT",
+                  attempt,
+                  "OF",
+                  MAX_ATTEMPTS
+              )
+              print(
+                  "################################################"
+              )
+
+              # Remove old scene files.
+              for filename in glob.glob(
+                  "scene_*.mp4"
+              ):
+
+                  try:
+                      os.remove(filename)
+                  except:
+                      pass
+
+              try:
+
+                  data = get_gemini_topic()
+
+              except Exception as e:
+
+                  print(
+                      "Gemini failed:",
+                      e
+                  )
+
+                  continue
+
+              print("")
+              print(
+                  "TOPIC:",
+                  data.get(
+                      "topic",
+                      ""
+                  )
+              )
+
+              print(
+                  "ANIMAL:",
+                  data.get(
+                      "animal",
+                      ""
+                  )
+              )
+
+              print(
+                  "TITLE:",
+                  data.get(
+                      "title",
+                      ""
+                  )
+              )
+
+              print("")
+              print(
+                  "SCRIPT:"
+              )
+
+              print(
+                  data.get(
+                      "script",
+                      ""
+                  )
+              )
+
+              # ----------------------------------------------------
+              # DUPLICATE CHECK
+              # ----------------------------------------------------
+
+              new_topic = str(
+                  data.get(
+                      "topic",
+                      ""
+                  )
+              ).strip().lower()
+
+              duplicate = False
+
+              for old_topic in used_topics:
+
+                  if (
+                      new_topic
+                      ==
+                      str(
+                          old_topic
+                      ).strip().lower()
+                  ):
+
+                      duplicate = True
+                      break
+
+              if duplicate:
+
+                  print(
+                      "DUPLICATE TOPIC."
+                  )
+
+                  continue
+
+              # ----------------------------------------------------
+              # PIXABAY
+              # ----------------------------------------------------
+
+              clips = find_pixabay_clips(
+                  data
+              )
+
+              print("")
+              print(
+                  "FOUND TRUSTED CLIPS:",
+                  len(clips)
+              )
+
+              # We need exactly five.
+              if len(clips) != 5:
+
+                  print(
+                      "NOT ENOUGH TRUSTED CLIPS."
+                  )
+
+                  print(
+                      "Trying another animal/topic..."
+                  )
+
+                  for filename in glob.glob(
+                      "scene_*.mp4"
+                  ):
+
+                      try:
+                          os.remove(filename)
+                      except:
+                          pass
+
+                  continue
+
+              # ----------------------------------------------------
+              # SUCCESS
+              # ----------------------------------------------------
+
+              final_data = data
+              final_clips = clips
+
+              break
+
+          if final_data is None:
+
+              raise SystemExit(
+                  "FAILED: Could not find a topic with "
+                  "five trustworthy matching Pixabay clips "
+                  "after three attempts."
+              )
+
+          # --------------------------------------------------------
+          # SAVE DATA
+          # --------------------------------------------------------
 
           with open(
               "short_data.json",
               "w",
               encoding="utf-8"
           ) as f:
+
               json.dump(
-                  output,
+                  final_data,
                   f,
                   ensure_ascii=False,
                   indent=2
               )
 
-          used_topics.append(output["topic"])
-
+          # Save footage information.
           with open(
-              topics_file,
+              "footage_sources.json",
               "w",
               encoding="utf-8"
           ) as f:
+
+              json.dump(
+                  final_clips,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+
+          # Only NOW mark the topic as used.
+          used_topics.append(
+              final_data["topic"]
+          )
+
+          with open(
+              TOPICS_FILE,
+              "w",
+              encoding="utf-8"
+          ) as f:
+
               json.dump(
                   used_topics,
                   f,
@@ -198,18 +868,32 @@ jobs:
                   indent=2
               )
 
-          print("========== GEMINI SUCCESS ==========")
-          print("TOPIC:", output["topic"])
-          print("ANIMAL:", output["animal"])
-          print("TITLE:", output["title"])
           print("")
-          print("SCRIPT:")
-          print(output["script"])
-          print("")
-          print("SEARCH TERMS:")
+          print(
+              "================================================"
+          )
+          print(
+              "FOOTAGE SELECTION SUCCESS"
+          )
+          print(
+              "================================================"
+          )
 
-          for term in output["search_terms"]:
-              print("-", term)
+          print(
+              "Animal:",
+              final_data["animal"]
+          )
+
+          for clip in final_clips:
+
+              print(
+                  "Scene",
+                  clip["scene"],
+                  "| ID:",
+                  clip["id"],
+                  "| Tags:",
+                  clip["tags"]
+              )
 
           PY
 
@@ -230,6 +914,7 @@ jobs:
               "r",
               encoding="utf-8"
           ) as f:
+
               data = json.load(f)
 
           pipeline = KPipeline(
@@ -245,14 +930,18 @@ jobs:
           parts = []
 
           for _, _, audio in generator:
+
               parts.append(audio)
 
           if not parts:
+
               raise SystemExit(
                   "Kokoro did not generate audio."
               )
 
-          audio = np.concatenate(parts)
+          audio = np.concatenate(
+              parts
+          )
 
           sf.write(
               "voice.wav",
@@ -260,307 +949,14 @@ jobs:
               24000
           )
 
-          print("Male Kokoro voice created!")
-
-          PY
-
-      # ============================================================
-      # 3. PIXABAY
-      # ============================================================
-
-      - name: Download relevant Pixabay clips
-        env:
-          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
-        run: |
-          python - <<'PY'
-          import os
-          import json
-          import urllib.request
-          import urllib.parse
-          import time
-          import re
-
-          API_KEY = os.environ["PIXABAY_API_KEY"]
-
-          with open(
-              "short_data.json",
-              "r",
-              encoding="utf-8"
-          ) as f:
-              data = json.load(f)
-
-          animal = data["animal"].strip().lower()
-          search_terms = data["search_terms"]
-
-          generic_words = {
-              "animal",
-              "animals",
-              "wildlife",
-              "nature",
-              "bird",
-              "birds",
-              "fish",
-              "mammal",
-              "mammals",
-              "reptile",
-              "reptiles",
-              "marine",
-              "ocean",
-              "sea"
-          }
-
-          animal_words = set(
-              re.findall(
-                  r"[a-z]+",
-                  animal
-              )
-          )
-
-          distinctive_words = (
-              animal_words - generic_words
-          )
-
-          downloaded = 0
-
-          for index, search_term in enumerate(
-              search_terms,
-              1
-          ):
-
-              print("")
-              print(
-                  "========== SCENE",
-                  index,
-                  "=========="
-              )
-
-              print(
-                  "SEARCH:",
-                  search_term
-              )
-
-              query = urllib.parse.quote(
-                  search_term
-              )
-
-              url = (
-                  "https://pixabay.com/api/videos/"
-                  f"?key={API_KEY}"
-                  f"&q={query}"
-                  "&category=animals"
-                  "&safesearch=true"
-                  "&per_page=20"
-              )
-
-              req = urllib.request.Request(
-                  url,
-                  headers={
-                      "User-Agent": "Mozilla/5.0"
-                  }
-              )
-
-              with urllib.request.urlopen(
-                  req
-              ) as response:
-
-                  result = json.loads(
-                      response.read().decode("utf-8")
-                  )
-
-              videos = result.get(
-                  "hits",
-                  []
-              )
-
-              selected = None
-              best_score = -1
-
-              search_words = set(
-                  re.findall(
-                      r"[a-z]+",
-                      search_term.lower()
-                  )
-              )
-
-              for video in videos:
-
-                  tags = str(
-                      video.get(
-                          "tags",
-                          ""
-                      )
-                  ).lower()
-
-                  tag_words = set(
-                      re.findall(
-                          r"[a-z]+",
-                          tags
-                      )
-                  )
-
-                  normalized_tags = " ".join(
-                      re.findall(
-                          r"[a-z]+",
-                          tags
-                      )
-                  )
-
-                  normalized_animal = " ".join(
-                      re.findall(
-                          r"[a-z]+",
-                          animal
-                      )
-                  )
-
-                  score = 0
-
-                  if normalized_animal in normalized_tags:
-                      score += 200
-
-                  matched_distinctive = (
-                      distinctive_words.intersection(
-                          tag_words
-                      )
-                  )
-
-                  score += (
-                      len(matched_distinctive)
-                      * 100
-                  )
-
-                  score += len(
-                      search_words.intersection(
-                          tag_words
-                      )
-                  ) * 5
-
-                  if score > best_score:
-                      best_score = score
-                      selected = video
-
-              if selected is None:
-                  print(
-                      "No Pixabay results found."
-                  )
-                  continue
-
-              selected_tags = str(
-                  selected.get(
-                      "tags",
-                      ""
-                  )
-              ).lower()
-
-              selected_tag_words = set(
-                  re.findall(
-                      r"[a-z]+",
-                      selected_tags
-                  )
-              )
-
-              if distinctive_words:
-
-                  if not distinctive_words.intersection(
-                      selected_tag_words
-                  ):
-
-                      print(
-                          "Pixabay results were found, "
-                          "but no confident animal match."
-                      )
-
-                      print(
-                          "BEST TAGS:",
-                          selected.get(
-                              "tags",
-                              ""
-                          )
-                      )
-
-                      continue
-
-              print(
-                  "MATCHED TAGS:",
-                  selected.get(
-                      "tags",
-                      ""
-                  )
-              )
-
-              video_url = selected[
-                  "videos"
-              ][
-                  "medium"
-              ][
-                  "url"
-              ]
-
-              print(
-                  "VIDEO:",
-                  video_url
-              )
-
-              download_req = urllib.request.Request(
-                  video_url,
-                  headers={
-                      "User-Agent": "Mozilla/5.0"
-                  }
-              )
-
-              with urllib.request.urlopen(
-                  download_req
-              ) as response:
-
-                  with open(
-                      f"scene_{index}.mp4",
-                      "wb"
-                  ) as f:
-
-                      f.write(
-                          response.read()
-                      )
-
-              print(
-                  "Downloaded scene",
-                  index
-              )
-
-              downloaded += 1
-
-              time.sleep(1)
-
-          if downloaded < 3:
-
-              raise SystemExit(
-                  "Only "
-                  + str(downloaded)
-                  + " relevant Pixabay clips were found. "
-                  "At least 3 are required."
-              )
-
-          print("")
           print(
-              "========== DOWNLOADED SCENES =========="
+              "Male Kokoro voice created!"
           )
-
-          for i in range(1, 6):
-
-              filename = (
-                  f"scene_{i}.mp4"
-              )
-
-              if os.path.exists(
-                  filename
-              ):
-
-                  print(
-                      filename
-                  )
 
           PY
 
       # ============================================================
-      # 4. NORMALIZE + COMBINE
+      # 3. NORMALIZE + COMBINE FOOTAGE
       # ============================================================
 
       - name: Normalize and combine footage
@@ -596,9 +992,10 @@ jobs:
               )
           )
 
-          if not files:
+          if len(files) != 5:
+
               raise SystemExit(
-                  "No normalized clips were created."
+                  "Expected exactly 5 normalized clips."
               )
 
           with open(
@@ -634,7 +1031,7 @@ jobs:
             combined.mp4
 
       # ============================================================
-      # 5. WHISPER
+      # 4. WHISPER
       # ============================================================
 
       - name: Generate Whisper captions
@@ -651,7 +1048,7 @@ jobs:
           cat captions/voice.srt
 
       # ============================================================
-      # 6. SRT TO ASS
+      # 5. SRT TO ASS
       # ============================================================
 
       - name: Convert captions to ASS
@@ -660,13 +1057,16 @@ jobs:
           import re
 
           def ass_time(timestamp):
+
               timestamp = timestamp.strip()
 
               hours, minutes, rest = timestamp.split(":")
 
               seconds, milliseconds = rest.split(",")
 
-              centiseconds = int(milliseconds) // 10
+              centiseconds = int(
+                  milliseconds
+              ) // 10
 
               return (
                   str(int(hours))
@@ -713,9 +1113,7 @@ jobs:
               "Collisions: Normal"
           )
 
-          ass_lines.append(
-              ""
-          )
+          ass_lines.append("")
 
           ass_lines.append(
               "[V4+ Styles]"
@@ -729,9 +1127,7 @@ jobs:
               "Style: Default,DejaVu Sans,58,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,2,80,80,260,1"
           )
 
-          ass_lines.append(
-              ""
-          )
+          ass_lines.append("")
 
           ass_lines.append(
               "[Events]"
@@ -810,7 +1206,7 @@ jobs:
           PY
 
       # ============================================================
-      # 7. FINAL VIDEO
+      # 6. FINAL VIDEO
       # ============================================================
 
       - name: Create final vertical Short
@@ -836,7 +1232,7 @@ jobs:
           ls -lh animal-short.mp4
 
       # ============================================================
-      # 8. ARTIFACT
+      # 7. UPLOAD ARTIFACT
       # ============================================================
 
       - name: Upload final Short
@@ -846,11 +1242,12 @@ jobs:
           path: |
             animal-short.mp4
             short_data.json
+            footage_sources.json
             captions/voice.srt
             captions/voice.ass
 
       # ============================================================
-      # 9. SAVE TOPIC HISTORY
+      # 8. SAVE TOPIC HISTORY
       # ============================================================
 
       - name: Save topic history
@@ -867,4 +1264,3 @@ jobs:
             -m "Update used animal topics"
 
           git push
-  
