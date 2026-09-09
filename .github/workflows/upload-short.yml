@@ -9,15 +9,19 @@ jobs:
   upload:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: animal-short
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
 
       - name: Install
         run: pip install google-api-python-client google-auth
 
-      - name: Upload
+      - name: Check YouTube channel
         env:
           CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -45,4 +49,5 @@ jobs:
           ).execute()
 
           print("CHANNEL:", ch["items"][0]["snippet"]["title"])
+          print("CHANNEL ID:", ch["items"][0]["id"])
           PY
