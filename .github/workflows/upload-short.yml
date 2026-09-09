@@ -1,0 +1,45 @@
+name: Upload Short
+
+on:
+  workflow_dispatch:
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: animal-short
+
+      - name: Install
+        run: pip install google-api-python-client google-auth
+
+      - name: Upload
+        env:
+          CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os
+          from google.oauth2.credentials import Credentials
+          from googleapiclient.discovery import build
+
+          c = Credentials(
+              None,
+              refresh_token=os.environ["REFRESH_TOKEN"],
+              token_uri="https://oauth2.googleapis.com/token",
+              client_id=os.environ["CLIENT_ID"],
+              client_secret=os.environ["CLIENT_SECRET"],
+              scopes=["https://www.googleapis.com/auth/youtube.upload"]
+          )
+
+          youtube = build("youtube", "v3", credentials=c)
+
+          ch = youtube.channels().list(
+              part="snippet",
+              mine=True
+          ).execute()
+
+          print("CHANNEL:", ch["items"][0]["snippet"]["title"])
+          PY
