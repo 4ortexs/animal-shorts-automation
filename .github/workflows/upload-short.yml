@@ -1,10 +1,13 @@
 name: Upload Short
 
 on:
-  workflow_dispatch:
+  workflow_run:
+    workflows: ["Create Animal Short"]
+    types: [completed]
 
 jobs:
   upload:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
